@@ -1,0 +1,78 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import liboidcagent as agent
+import requests
+import json
+from kubernetes import client, config
+
+page_length = 100
+
+def get_users(n_iteration, headers, mapfile_entries):
+
+    params = { 'startIndex': n_iteration*page_length + 1 }
+    r = requests.get("https://cms-auth.web.cern.ch/scim/Users", headers=headers, params=params)
+
+    for user in json.loads(r.text)["Resources"]:
+        groups = []
+        username = user['displayName'] 
+        tid = user['id']
+        if 'groups' in user:
+            groups = [ x['display'] for x in user['groups']]
+        if 'urn:indigo-dc:scim:schemas:IndigoUser' in user:
+            if 'oidcIds' in user['urn:indigo-dc:scim:schemas:IndigoUser']:
+                for oidcIds in user['urn:indigo-dc:scim:schemas:IndigoUser']['oidcIds']:
+                    if "https://auth.cern.ch/auth/realms/cern" in oidcIds["issuer"]:
+                        username = oidcIds['subject']
+
+        if 'cms/afprotoit/users' in groups or 'cms/aprotit' in groups:
+            print("SCITOKENS https:\\/\\/cms-auth.web.cern.ch\\/,%s %s" % (tid, username))
+            mapfile_entries.append("SCITOKENS https:\\/\\/cms-auth.web.cern.ch\\/,%s %s" % (tid, username))
+
+
+def main():
+
+    try:
+        token = agent.get_access_token('cms',scope="scim:read")
+        #print(token)
+    except agent.OidcAgentError as e:
+        print("ERROR oidc-agent: {}".format(e))
+
+    params = {}
+    headers = {'Authorization': 'Bearer %s' % token, 'Content-type': 'application/json' }
+    r = requests.get("https://cms-auth.web.cern.ch/scim/Users", headers=headers, params=params)
+
+    n_results = json.loads(r.text)['totalResults']
+    username = None 
+
+    n_iteration = 0
+    tasks = []
+
+    #config.load_kube_config()
+    config.load_incluster_config() 
+
+    mapfile_entries = []
+
+    while (n_iteration*page_length) < n_results:
+
+        get_users(n_iteration, headers, mapfile_entries)
+        n_iteration += 1
+
+    mapfile_entries.append("PASSWORD (*.) condor\nGSI (.*) anonymous")
+
+    print("\n".join(mapfile_entries))
+    cfg = client.V1ConfigMap(
+        metadata = {
+            "name": "mapfile"
+        },
+        data={"condormapfile": "\n".join(mapfile_entries)}
+    )
+
+    print(cfg.to_str())
+    client.CoreV1Api().replace_namespaced_config_map(
+        name="mapfile",
+        namespace="af",
+        body=cfg
+    )
+
+main()
