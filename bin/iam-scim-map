@@ -22,7 +22,7 @@ except Exception as ex:
 def get_users(n_iteration, headers, mapfile_entries, jhub_usermap):
 
     params = { 'startIndex': n_iteration*page_length + 1 }
-    r = requests.get(IAM_SERVER+"scim/Users", headers=headers, params=params)
+    r = requests.get("https://"+IAM_SERVER+"/scim/Users", headers=headers, params=params)
 
     for user in json.loads(r.text)["Resources"]:
         groups = []
