@@ -4,7 +4,7 @@ export OIDC_CONFIG_DIR=$HOME/.oidc-agent
 
 eval $(oidc-keychain)
 
-oidc-gen cms --issuer "$IAM_SERVER" \
+oidc-gen cms --issuer "https://$IAM_SERVER/" \
     --client-id "$IAM_CLIENT_ID" \
     --client-secret "$IAM_CLIENT_SECRET" \
     --rt "$REFRESH_TOKEN" \
