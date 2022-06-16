@@ -4,18 +4,30 @@
 import liboidcagent as agent
 import requests
 import json
+import os
 from kubernetes import client, config
 
 page_length = 100
 
+try:
+    IAM_SERVER = os.environ["IAM_SERVER"]
+    AUTHORIZED_GROUPS = os.environ["AUTHORIZED_GROUPS"].split(" ")
+    USERNAME_CLAIM = os.environ["USERNAME_CLAIM"]
+    MAPFILE_NAME = os.environ["MAPFILE_NAME"]
+    MAPFILE_NAMESPACE = os.environ["MAPFILE_NAMESPACE"]
+except Exception as ex:
+    print(ex)
+    exit(1)
+
 def get_users(n_iteration, headers, mapfile_entries):
 
     params = { 'startIndex': n_iteration*page_length + 1 }
-    r = requests.get("https://cms-auth.web.cern.ch/scim/Users", headers=headers, params=params)
+    r = requests.get(IAM_SERVER+"scim/Users", headers=headers, params=params)
 
     for user in json.loads(r.text)["Resources"]:
         groups = []
-        username = user['displayName'] 
+        #username = user['displayName']
+        username = user[USERNAME_CLAIM]
         tid = user['id']
         if 'groups' in user:
             groups = [ x['display'] for x in user['groups']]
@@ -25,9 +37,12 @@ def get_users(n_iteration, headers, mapfile_entries):
                     if "https://auth.cern.ch/auth/realms/cern" in oidcIds["issuer"]:
                         username = oidcIds['subject']
 
-        if 'cms/afprotoit/users' in groups or 'cms/aprotit' in groups:
-            print("SCITOKENS https:\\/\\/cms-auth.web.cern.ch\\/,%s %s" % (tid, username))
-            mapfile_entries.append("SCITOKENS https:\\/\\/cms-auth.web.cern.ch\\/,%s %s" % (tid, username))
+        for auth_grp in AUTHORIZED_GROUPS:                
+            #if 'cms/afprotoit/users' in groups or 'cms/aprotit' in groups:
+            if auth_grp in groups:
+                print("SCITOKENS https:\\/\\/cms-auth.web.cern.ch\\/,%s %s" % (tid, username))
+                mapfile_entries.append("SCITOKENS https:\\/\\/cms-auth.web.cern.ch\\/,%s %s" % (tid, username))
+                break
 
 
 def main():
@@ -63,15 +78,15 @@ def main():
     print("\n".join(mapfile_entries))
     cfg = client.V1ConfigMap(
         metadata = {
-            "name": "mapfile"
+            "name": MAPFILE_NAME
         },
         data={"condormapfile": "\n".join(mapfile_entries)}
     )
 
     print(cfg.to_str())
     client.CoreV1Api().replace_namespaced_config_map(
-        name="mapfile",
-        namespace="af",
+        name=MAPFILE_NAME,
+        namespace=MAPFILE_NAMESPACE,
         body=cfg
     )
 
