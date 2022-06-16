@@ -40,8 +40,8 @@ def get_users(n_iteration, headers, mapfile_entries, jhub_usermap):
         for auth_grp in AUTHORIZED_GROUPS:                
             #if 'cms/afprotoit/users' in groups or 'cms/aprotit' in groups:
             if auth_grp in groups:
-                print("SCITOKENS https:\\/\\/cms-auth.web.cern.ch\\/,%s %s" % (tid, username))
-                mapfile_entries.append("SCITOKENS https:\\/\\/cms-auth.web.cern.ch\\/,%s %s" % (tid, username))
+                print("SCITOKENS https:\\/\\/"+IAM_SERVER+"\\/,%s %s" % (tid, username))
+                mapfile_entries.append("SCITOKENS https:\\/\\/"+IAM_SERVER+"\\/,%s %s" % (tid, username))
                 jhub_usermap.update({user[USERNAME_CLAIM]: username})
                 break
 
@@ -56,7 +56,7 @@ def main():
 
     params = {}
     headers = {'Authorization': 'Bearer %s' % token, 'Content-type': 'application/json' }
-    r = requests.get("https://cms-auth.web.cern.ch/scim/Users", headers=headers, params=params)
+    r = requests.get("https://"+IAM_SERVER+"/scim/Users", headers=headers, params=params)
 
     n_results = json.loads(r.text)['totalResults']
     username = None 
