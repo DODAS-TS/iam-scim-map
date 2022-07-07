@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import liboidcagent as agent
@@ -11,69 +11,29 @@ page_length = 100
 
 try:
     IAM_SERVER = os.environ["IAM_SERVER"]
+    OIDC_AGENT_NAME = os.environ.get("OIDC_AGENT_NAME", "cms")
     AUTHORIZED_GROUPS = os.environ["AUTHORIZED_GROUPS"].split(" ")
-    USERNAME_CLAIM = os.environ["USERNAME_CLAIM"]
-    MAPFILE_NAME = os.environ["MAPFILE_NAME"]
-    MAPFILE_NAMESPACE = os.environ["MAPFILE_NAMESPACE"]
+    USERNAME_CLAIM = os.environ.get("USERNAME_CLAIM", "displayName")
+    MAPFILE_NAME = os.environ.get("MAPFILE_NAME", None)
+    MAPFILE_NAMESPACE = os.environ.get("MAPFILE_NAMESPACE", None)
 except Exception as ex:
     print(ex)
     exit(1)
 
-def get_users(n_iteration, headers, mapfile_entries, jhub_usermap):
+def build_map_htcondor(tids, usernames, userclaims):
+    jhub_usermap = {}
 
-    params = { 'startIndex': n_iteration*page_length + 1 }
-    r = requests.get("https://"+IAM_SERVER+"/scim/Users", headers=headers, params=params)
+    for tid, username, userclaim in zip(tids, usernames, userclaims):
+        print("SCITOKENS https:\\/\\/"+IAM_SERVER+"\\/,%s %s" % (tid, username))
+        mapfile_entries.append("SCITOKENS https:\\/\\/"+IAM_SERVER+"\\/,%s %s" % (tid, username))
+        jhub_usermap.update({userclaim: username})
+    
+    return mapfile_entries, jhub_usermap
 
-    for user in json.loads(r.text)["Resources"]:
-        groups = []
-        #username = user['displayName']
-        username = user[USERNAME_CLAIM]
-        tid = user['id']
-        if 'groups' in user:
-            groups = [ x['display'] for x in user['groups']]
-        if 'urn:indigo-dc:scim:schemas:IndigoUser' in user:
-            if 'oidcIds' in user['urn:indigo-dc:scim:schemas:IndigoUser']:
-                for oidcIds in user['urn:indigo-dc:scim:schemas:IndigoUser']['oidcIds']:
-                    if "https://auth.cern.ch/auth/realms/cern" in oidcIds["issuer"]:
-                        username = oidcIds['subject']
-
-        for auth_grp in AUTHORIZED_GROUPS:                
-            #if 'cms/afprotoit/users' in groups or 'cms/aprotit' in groups:
-            if auth_grp in groups:
-                print("SCITOKENS https:\\/\\/"+IAM_SERVER+"\\/,%s %s" % (tid, username))
-                mapfile_entries.append("SCITOKENS https:\\/\\/"+IAM_SERVER+"\\/,%s %s" % (tid, username))
-                jhub_usermap.update({user[USERNAME_CLAIM]: username})
-                break
-
-
-def main():
-
-    try:
-        token = agent.get_access_token('cms',scope="scim:read")
-        #print(token)
-    except agent.OidcAgentError as e:
-        print("ERROR oidc-agent: {}".format(e))
-
-    params = {}
-    headers = {'Authorization': 'Bearer %s' % token, 'Content-type': 'application/json' }
-    r = requests.get("https://"+IAM_SERVER+"/scim/Users", headers=headers, params=params)
-
-    n_results = json.loads(r.text)['totalResults']
-    username = None 
-
-    n_iteration = 0
-    tasks = []
+def merge_map_htcondor(mapfile_entries, jhub_usermap):
 
     #config.load_kube_config()
     config.load_incluster_config() 
-
-    mapfile_entries = []
-    jhub_usermap = {}
-
-    while (n_iteration*page_length) < n_results:
-
-        get_users(n_iteration, headers, mapfile_entries, jhub_usermap)
-        n_iteration += 1
 
     mapfile_entries.append("PASSWORD (*.) condor\nGSI (.*) anonymous")
 
@@ -94,5 +54,92 @@ def main():
         namespace=MAPFILE_NAMESPACE,
         body=cfg
     )
+
+    return
+
+def build_map_opa(tids, usernames):
+    opa_usermap = {}
+
+    for tid, username in zip(tids, usernames):
+        opa_usermap.update({tid: username})
+    
+    return opa_usermap
+
+def get_users(n_iteration, headers):
+
+    params = { 'startIndex': n_iteration*page_length + 1 }
+    r = requests.get("https://"+IAM_SERVER+"/scim/Users", headers=headers, params=params)
+
+    tids = []
+    usernames = []
+    userclaims = []
+
+    for user in json.loads(r.text)["Resources"]:
+        groups = []
+        #username = user['displayName']
+        username = user[USERNAME_CLAIM]
+        tid = user['id']
+        if 'groups' in user:
+            groups = [ x['display'] for x in user['groups']]
+        if 'urn:indigo-dc:scim:schemas:IndigoUser' in user:
+            if 'oidcIds' in user['urn:indigo-dc:scim:schemas:IndigoUser']:
+                for oidcIds in user['urn:indigo-dc:scim:schemas:IndigoUser']['oidcIds']:
+                    if "https://auth.cern.ch/auth/realms/cern" in oidcIds["issuer"]:
+                        username = oidcIds['subject']
+
+        for auth_grp in AUTHORIZED_GROUPS:                
+            #if 'cms/afprotoit/users' in groups or 'cms/aprotit' in groups:
+            if auth_grp in groups:
+                tids.append(tid)
+                usernames.append(username)
+                userclaims.append(user[USERNAME_CLAIM])
+                break
+    
+    return tids, usernames, userclaims
+
+
+def main():
+
+    try:
+        token = agent.get_access_token(OIDC_AGENT_NAME,scope="scim:read")
+        #print(token)
+    except agent.OidcAgentError as e:
+        print("ERROR oidc-agent: {}".format(e))
+
+    params = {}
+    headers = {'Authorization': 'Bearer %s' % token, 'Content-type': 'application/json' }
+    r = requests.get("https://"+IAM_SERVER+"/scim/Users", headers=headers, params=params)
+
+    print(r.text)
+    n_results = json.loads(r.text)['totalResults']
+    username = None 
+
+    n_iteration = 0
+    tasks = []
+
+    mapfile_entries = []
+    jhub_usermap = {}
+
+    opa_user_map = {}
+
+    while (n_iteration*page_length) < n_results:
+
+        tids, usernames, userclaims = get_users(n_iteration, headers)
+
+        if MAPFILE_NAME:
+            mapfile_entries_tmp, jhub_usermap_tmp = build_map_htcondor(tids, usernames, userclaims)
+
+            mapfile_entries.append(mapfile_entries_tmp)
+            jhub_usermap.update(jhub_usermap_tmp)
+        else:
+            opa_user_map.update(build_map_opa(tids, usernames))
+
+        n_iteration += 1
+
+    if MAPFILE_NAME:
+        merge_map_htcondor(mapfile_entries, jhub_usermap)
+    else:
+        with open("/tmp/data.json", "w") as f:
+            json.dump(opa_user_map, f)
 
 main()
